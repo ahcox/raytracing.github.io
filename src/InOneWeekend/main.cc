@@ -42,13 +42,20 @@ color ray_color(const ray& r, const hittable& world, int depth) {
 
 
 hittable_list random_scene() {
+    using namespace std;
     hittable_list world;
+    std::vector<std::shared_ptr<sphere>> spheres;
 
     auto ground_material = make_shared<lambertian>(color(0.5, 0.5, 0.5));
-    world.add(make_shared<sphere>(point3(0,-1000,0), 1000, ground_material));
+    //world.add(make_shared<sphere>(point3(0,-1000,0), 1000, ground_material));
+    spheres.push_back(make_shared<sphere>(point3(0,-1000,0), 1000, ground_material));
+    unsigned num_spheres = 0;
+    for (int a = -11; a < 11; a += 3){//a++) {
+        for (int b = -11; b < 11; b+= 3){ //b++) {
 
-    for (int a = -11; a < 11; a++) {
-        for (int b = -11; b < 11; b++) {
+            // The shader starts locking up with too many balls:
+            if(num_spheres++ > 120) goto after_loop;
+
             auto choose_mat = random_double();
             point3 center(a + 0.9*random_double(), 0.2, b + 0.9*random_double());
 
@@ -59,30 +66,94 @@ hittable_list random_scene() {
                     // diffuse
                     auto albedo = color::random() * color::random();
                     sphere_material = make_shared<lambertian>(albedo);
-                    world.add(make_shared<sphere>(center, 0.2, sphere_material));
+                    //world.add(make_shared<sphere>(center, 0.2, sphere_material));
+                    spheres.push_back(make_shared<sphere>(center, 0.2, sphere_material));
                 } else if (choose_mat < 0.95) {
                     // metal
                     auto albedo = color::random(0.5, 1);
                     auto fuzz = random_double(0, 0.5);
                     sphere_material = make_shared<metal>(albedo, fuzz);
-                    world.add(make_shared<sphere>(center, 0.2, sphere_material));
+                    //world.add(make_shared<sphere>(center, 0.2, sphere_material));
+                    spheres.push_back(make_shared<sphere>(center, 0.2, sphere_material));
                 } else {
                     // glass
                     sphere_material = make_shared<dielectric>(1.5);
-                    world.add(make_shared<sphere>(center, 0.2, sphere_material));
+                    //world.add(make_shared<sphere>(center, 0.2, sphere_material));
+                    spheres.push_back(make_shared<sphere>(center, 0.2, sphere_material));
                 }
             }
         }
     }
+after_loop:
 
     auto material1 = make_shared<dielectric>(1.5);
-    world.add(make_shared<sphere>(point3(0, 1, 0), 1.0, material1));
+    //world.add(make_shared<sphere>(point3(0, 1, 0), 1.0, material1));
+    spheres.push_back(make_shared<sphere>(point3(0, 1, 0), 1.0, material1));
 
     auto material2 = make_shared<lambertian>(color(0.4, 0.2, 0.1));
-    world.add(make_shared<sphere>(point3(-4, 1, 0), 1.0, material2));
+    //world.add(make_shared<sphere>(point3(-4, 1, 0), 1.0, material2));
+    spheres.push_back(make_shared<sphere>(point3(-4, 1, 0), 1.0, material2));
 
     auto material3 = make_shared<metal>(color(0.7, 0.6, 0.5), 0.0);
-    world.add(make_shared<sphere>(point3(4, 1, 0), 1.0, material3));
+    //world.add(make_shared<sphere>(point3(4, 1, 0), 1.0, material3));
+    spheres.push_back(make_shared<sphere>(point3(4, 1, 0), 1.0, material3));
+
+    std::cout.precision(20);
+    std::cout << std::defaultfloat;
+    std::cout << "// Our scene (a sphere is {x,y,x,radius}):\n";
+    std::cout << "const vec4 spheres[] = {\n";
+
+    std::string matref  =     "const MaterialRef sphere_materials[spheres.length()] = {\n";
+    std::string lambs   =     "const vec3 lambertian_params[] = {\n";
+    std::string mirrors =     "const vec3 mirror_params[] = {\n";
+    std::string metals  =     "/// {R,G,B,Fuzziness}\n"
+                              "const vec4 metal_params[] = {\n";
+    std::string dielectrics = "/// {R,G,B, Index of Refraction}\n"
+                               "const vec4 dielectric_params[] = {\n";
+
+    unsigned lamb_i = 0;
+    unsigned mirror_i = 0;
+    unsigned metal_i = 0;
+    unsigned dielectric_i = 0;
+    for(const auto sphere : spheres)
+    {
+        std::cout << "    {" << sphere->center.x() << "f, " << sphere->center.y() << "f, " << sphere->center.z() << "f, " << sphere->radius << "f},\n";
+        lambertian* lamb = nullptr;
+        metal* met = nullptr;
+        dielectric* dia = nullptr;
+        if(lamb = dynamic_cast<lambertian*>(&*sphere->mat_ptr)){
+            lambs += "    {" + std::to_string(lamb->albedo.x()) + "f, " + std::to_string(lamb->albedo.y()) + "f, " + std::to_string(lamb->albedo.z()) + "f},\n";
+            matref += "    {MT_LAMBERTIAN, " + to_string(lamb_i) + "us},\n";
+            ++lamb_i;
+        }
+        else if(met = dynamic_cast<metal*>(&*sphere->mat_ptr)){
+            if(met->fuzz == 0){
+                mirrors += "    {" + std::to_string(met->albedo.x()) + "f, " + std::to_string(met->albedo.y()) + "f, " + std::to_string(met->albedo.z()) + "f},\n";
+                matref += "    {MT_MIRROR, " + to_string(mirror_i++) + "us},\n";
+            } else {
+                metals += "    {" + std::to_string(met->albedo.x()) + "f, " + std::to_string(met->albedo.y()) + "f, " + std::to_string(met->albedo.z()) + "f, " + std::to_string(met->fuzz) + "f},\n";
+                matref += "    {MT_METAL, " + to_string(metal_i++) + "us},\n";
+            }
+        }
+        else if(dia = dynamic_cast<dielectric*>(&*sphere->mat_ptr)){
+            dielectrics += "    {1.0f, 1.0f, 1.0f, " + std::to_string(dia->ir) + "f},\n";
+            matref += "    {MT_DIELECTRIC, " + to_string(dielectric_i++) + "us},\n";
+        }
+        else {
+            // Unknown material type so reference the first lambertian as a fallback:
+            matref += "    {MT_LAMBERTIAN, 0us},\n";
+        }
+    }
+
+    std::cout << "};\n";
+
+    matref      += "};\n\n";
+    lambs       += "};\n\n";
+    mirrors     += "};\n\n";
+    metals      += "};\n\n";
+    dielectrics += "};\n\n";
+
+    std::cout << "\n\n" << matref << lambs << mirrors << metals << dielectrics;
 
     return world;
 }
@@ -101,6 +172,7 @@ int main() {
     // World
 
     auto world = random_scene();
+    exit(1);
 
     // Camera
 
